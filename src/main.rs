@@ -191,12 +191,14 @@ fn main() -> Result<()> {
     let mut fps = 0.0;
 
     // Timelapse recording
+    let mut timelapse_filename= "".to_string();
     let mut timelapse: VideoWriter = VideoWriter::default()?;
     let mut skip_timlapse = false;
     if config.flag_timelapse
     {
         info!("Timelapse recording is enabled.");
-        timelapse = create_video_writer(&format!("captures/timelapse/{}.mp4", timestamp_string()), 1.5, fsize);
+        timelapse_filename = format!("captures/timelapse/{}.mp4", timestamp_string());
+        timelapse = create_video_writer(&timelapse_filename, 1.5, fsize);
     }
     else { info!("Timelapse recording is disabled."); }
 
@@ -390,7 +392,19 @@ fn main() -> Result<()> {
                     {
                         skip_timlapse = true;
                         timelapse.release()?;
-                        timelapse = create_video_writer(&format!("captures/timelapse/{}.mp4", timestamp_string()), 1.5, fsize);
+
+                        if notify_timelapse_rollover
+                        {
+                            // Call the notify script
+                            info!("Calling 'notify_timelapse_rollover.sh {}'", &timelapse_filename);
+                            let r = Command::new("./notify_timelapse_rollover.sh")
+                                .arg(&timelapse_filename).spawn();
+                            if let Err(e) = r { error!("Error calling script: {}", e) }
+                        }
+
+                        timelapse_filename = format!("captures/timelapse/{}.mp4", timestamp_string());
+                        timelapse = create_video_writer(&timelapse_filename,1.5, fsize);
+
                     } else { skip_timlapse = false; }
                 }
             }
