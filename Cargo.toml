@@ -1,0 +1,16 @@
+[package]
+name = "security_camera"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+docopt = "1.1.1"
+fern = "0.6.1"
+log = "0.4.14"
+chrono = "0.4.19"
+csv = "1.1"
+serde = { version = "1", features = ["derive"] }
+opencv = { version = "0.63",  features = ["clang-runtime"] }
+moonfire-tflite = { git = "https://github.com/scottlamb/moonfire-tflite", features = ["edgetpu"] }
