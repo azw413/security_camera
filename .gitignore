@@ -1,0 +1,6 @@
+target
+*.DS_Store
+.idea
+captures/timelapse
+captures/people/video
+captures/people/photos
