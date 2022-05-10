@@ -1,5 +1,7 @@
 # Security Camera Monitor
-This is a simple rust project using opencv, Coral EdgeTPU (https://coral.ai/products/accelerator) and TensorflowLite to detect people in a video stream. 
+This is a simple rust project using opencv, Coral EdgeTPU (https://coral.ai/products/accelerator) and TensorflowLite to detect people in a video stream and record them to mp4 files. 
+The obvious use case is a security camera that records visitors and sends notifications. 
+There's probably many others like recording birds visiting a feeding station, turning on the sprinkler when next door's cat has strayed into your garden etc. 
 
 Features :-
 * Run with UI monitor window or headless,
