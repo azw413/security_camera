@@ -216,212 +216,222 @@ fn main() -> Result<()> {
 
     // Main activity loop
     loop {
-        cam.read(&mut frame)?;
-        if frame.size()?.width > 0 {
-            let mut frame320rc = frame.col_bounds(fx, fw)?;
-            resize(&frame320rc, &mut frame320, size320, 0.0, 0.0, INTER_AREA);
+        let rs = cam.read(&mut frame);
+        match rs {
+            Ok(true) => {
+                if frame.size()?.width > 0 {
+                    let mut frame320rc = frame.col_bounds(fx, fw);
+                    match frame320rc {
+                        Ok(mut frame320rc) => {
+                            resize(&frame320rc, &mut frame320, size320, 0.0, 0.0, INTER_AREA);
 
-            // Create input tensor
-            let mut it = interpreter.inputs();
-            let mut input_bytes = it[0].bytes_mut();
+                            // Create input tensor
+                            let mut it = interpreter.inputs();
+                            let mut input_bytes = it[0].bytes_mut();
 
-            // Copy pixel data swapping from opencv BGR format
-            let mut o = 0;
-            let src = frame320.data_bytes()?;
-            for y in 1..RESOLUTION {
-                for x in 1..RESOLUTION {
-                    input_bytes[o + 0] = src[o + 2]; // R
-                    input_bytes[o + 1] = src[o + 1]; // G
-                    input_bytes[o + 2] = src[o + 0]; // B
-                    o = o + 3;
-                }
-            }
-
-            // Raw copy also seems to work but is no faster (on a MacBook Pro).
-            //input_bytes.copy_from_slice(frame320.data_bytes()?);
-
-            let r = interpreter.invoke();
-            match r {
-                Err(e) => { println!("Invoke failed"); }
-                _ => {}
-            }
-
-            let ot = interpreter.outputs();
-
-            for i in 0..50
-            {
-                if (ot[2].f32s()[i] > THRESHOLD)
-                {
-                    let x = (ot[0].f32s()[(i*4) + 1] * (RESOLUTION as f32) * d) as i32;
-                    let y = (ot[0].f32s()[(i*4) + 0] * (RESOLUTION as f32)* d) as i32;
-                    let w = (ot[0].f32s()[(i*4) + 3] * (RESOLUTION as f32)* d) as i32;
-                    let h = (ot[0].f32s()[(i*4) + 2] * (RESOLUTION as f32)* d) as i32;
-                    let r = Rect {
-                        x,
-                        y,
-                        width: w - x,
-                        height: h - y
-                    };
-
-                    let object = (ot[1].f32s()[i] + 1.0) as i32;
-                    if object == 1 // Person
-                    {
-                        let outside_color = Scalar::from((64.0, 64.0, 240.0));
-                        let inside_color = Scalar::from((64.0, 240.0, 64.0));
-
-                        let centre = Point::new(r.x + r.width / 2, r.y + r.height / 2);
-
-                        if !use_polygon || inside_polygon(&polygon, &centre)
-                        {
-                            if config.flag_monitor
-                            {
-                                rectangle(&mut frame320rc, r, inside_color, 2, LINE_8, 0);
-                            }
-
-                            person_last_seen = SystemTime::now();
-                            let area = r.height * r.width;
-                            if area > person_best_size
-                            {
-                                person_best_size = area;
-                                person_best_frame = frame.clone();
-                                person_best_time = timestamp_string();
-                            }
-
-                            if (!person_recording)
-                            {
-                                // Start recording
-                                info!("Person detected - recording started");
-                                person_recording = true;
-                                person_video_file = format!("captures/people/video/{}.mp4", timestamp_string());
-                                person_writer = create_video_writer(&person_video_file, fps, fsize);
-
-                                // Write the buffer frames
-                                for i in buffer_pnt..buffer_size
-                                {
-                                    let f = buffer.get(i);
-                                    if let Some(frame) = f { person_writer.write(frame)?; }
+                            // Copy pixel data swapping from opencv BGR format
+                            let mut o = 0;
+                            let src = frame320.data_bytes()?;
+                            for y in 1..RESOLUTION {
+                                for x in 1..RESOLUTION {
+                                    input_bytes[o + 0] = src[o + 2]; // R
+                                    input_bytes[o + 1] = src[o + 1]; // G
+                                    input_bytes[o + 2] = src[o + 0]; // B
+                                    o = o + 3;
                                 }
-                                if buffer_pnt > 0 {
-                                    for i in 0..(buffer_pnt-1)
+                            }
+
+                            // Raw copy also seems to work but is no faster (on a MacBook Pro).
+                            //input_bytes.copy_from_slice(frame320.data_bytes()?);
+
+                            let r = interpreter.invoke();
+                            match r {
+                                Err(e) => { println!("Invoke failed"); }
+                                _ => {}
+                            }
+
+                            let ot = interpreter.outputs();
+
+                            for i in 0..50
+                            {
+                                if (ot[2].f32s()[i] > THRESHOLD)
+                                {
+                                    let x = (ot[0].f32s()[(i*4) + 1] * (RESOLUTION as f32) * d) as i32;
+                                    let y = (ot[0].f32s()[(i*4) + 0] * (RESOLUTION as f32)* d) as i32;
+                                    let w = (ot[0].f32s()[(i*4) + 3] * (RESOLUTION as f32)* d) as i32;
+                                    let h = (ot[0].f32s()[(i*4) + 2] * (RESOLUTION as f32)* d) as i32;
+                                    let r = Rect {
+                                        x,
+                                        y,
+                                        width: w - x,
+                                        height: h - y
+                                    };
+
+                                    let object = (ot[1].f32s()[i] + 1.0) as i32;
+                                    if object == 1 // Person
                                     {
-                                        let f = buffer.get(i);
-                                        if let Some(frame) = f { person_writer.write(frame)?; }
+                                        let outside_color = Scalar::from((64.0, 64.0, 240.0));
+                                        let inside_color = Scalar::from((64.0, 240.0, 64.0));
+
+                                        let centre = Point::new(r.x + r.width / 2, r.y + r.height / 2);
+
+                                        if !use_polygon || inside_polygon(&polygon, &centre)
+                                        {
+                                            if config.flag_monitor
+                                            {
+                                                rectangle(&mut frame320rc, r, inside_color, 2, LINE_8, 0);
+                                            }
+
+                                            person_last_seen = SystemTime::now();
+                                            let area = r.height * r.width;
+                                            if area > person_best_size
+                                            {
+                                                person_best_size = area;
+                                                person_best_frame = frame.clone();
+                                                person_best_time = timestamp_string();
+                                            }
+
+                                            if (!person_recording)
+                                            {
+                                                // Start recording
+                                                info!("Person detected - recording started");
+                                                person_recording = true;
+                                                person_video_file = format!("captures/people/video/{}.mp4", timestamp_string());
+                                                person_writer = create_video_writer(&person_video_file, fps, fsize);
+
+                                                // Write the buffer frames
+                                                for i in buffer_pnt..buffer_size
+                                                {
+                                                    let f = buffer.get(i);
+                                                    if let Some(frame) = f { person_writer.write(frame)?; }
+                                                }
+                                                if buffer_pnt > 0 {
+                                                    for i in 0..(buffer_pnt-1)
+                                                    {
+                                                        let f = buffer.get(i);
+                                                        if let Some(frame) = f { person_writer.write(frame)?; }
+                                                    }
+                                                }
+                                                buffer = Vec::with_capacity(buffer_size);
+                                                buffer_pnt = 0;
+
+                                                // Write first photo and call notifier
+                                                let flags = Vector::new();
+                                                let filename = format!("captures/people/photos/{}-first.jpg", timestamp_string());
+                                                imwrite(&filename, &frame, &flags);
+                                                if notify_start_person
+                                                {
+                                                    info!("Calling 'notify_start_person.sh {}'", &filename);
+                                                    let r = Command::new("./notify_start_person.sh")
+                                                        .arg(filename).spawn();
+                                                    if let Err(e) = r { error!("Error calling script: {}", e) }
+                                                }
+                                            }
+                                        }
+                                        else {
+                                            if config.flag_monitor
+                                            {
+                                                rectangle(&mut frame320rc, r, outside_color, 2, LINE_8, 0);
+                                            }
+                                        }
                                     }
                                 }
-                                buffer = Vec::with_capacity(buffer_size);
-                                buffer_pnt = 0;
+                            }
 
-                                // Write first photo and call notifier
-                                let flags = Vector::new();
-                                let filename = format!("captures/people/photos/{}-first.jpg", timestamp_string());
-                                imwrite(&filename, &frame, &flags);
-                                if notify_start_person
+                            // Person recording
+                            if person_recording
+                            {
+                                person_writer.write(&frame)?;
+                                let elapsed = SystemTime::now().duration_since(person_last_seen).unwrap().as_millis();
+                                if elapsed > 30000   // 30 seconds since last activity
                                 {
-                                    info!("Calling 'notify_start_person.sh {}'", &filename);
-                                    let r = Command::new("./notify_start_person.sh")
-                                        .arg(filename).spawn();
-                                    if let Err(e) = r { error!("Error calling script: {}", e) }
+                                    person_writer.release()?;
+
+                                    let flags = Vector::new();
+                                    let best_filename = format!("captures/people/photos/{}-best.jpg", person_best_time);
+                                    imwrite(&best_filename, &person_best_frame, &flags);
+                                    person_best_size = 0;
+
+                                    person_recording = false;
+                                    info!("Person recording finished.");
+
+                                    // Call the notifier
+                                    if notify_end_person
+                                    {
+                                        info!("Calling 'notify_end_person.sh {} {}'", &best_filename, &person_video_file);
+                                        let r = Command::new("./notify_end_person.sh")
+                                            .arg(best_filename).arg(&person_video_file).spawn();
+                                        if let Err(e) = r { error!("Error calling script: {}", e) }
+                                    }
                                 }
                             }
-                        }
-                        else {
+                            else
+                            {
+                                // Stash the frame in the buffer
+                                if buffer.len() <= buffer_pnt { buffer.push(frame.clone()); }
+                                else { buffer[buffer_pnt] = frame.clone(); }
+                                buffer_pnt = buffer_pnt + 1;
+                                if buffer_pnt == buffer_size { buffer_pnt = 0 };
+                            }
+
+                            // Time related
+                            frames += 1;
+
+                            let elapsed = SystemTime::now().duration_since(tick).unwrap().as_millis();
+                            if elapsed > 1000
+                            {
+                                // Update fps
+                                fps = (frames as f64) / ((elapsed as f64) / 1000.0);
+                                frames = 0;
+                                tick = SystemTime::now();
+
+                                if config.flag_timelapse
+                                {
+                                    // Write timelapse frame
+                                    timelapse.write(&frame);
+
+                                    // Rollover timelapse file
+                                    let time = Local::now();
+                                    if (time.second() == 0) && (time.minute() == 0) && (!skip_timlapse)
+                                    {
+                                        skip_timlapse = true;
+                                        timelapse.release()?;
+
+                                        if notify_timelapse_rollover
+                                        {
+                                            // Call the notify script
+                                            info!("Calling 'notify_timelapse_rollover.sh {}'", &timelapse_filename);
+                                            let r = Command::new("./notify_timelapse_rollover.sh")
+                                                .arg(&timelapse_filename).spawn();
+                                            if let Err(e) = r { error!("Error calling script: {}", e) }
+                                        }
+
+                                        timelapse_filename = format!("captures/timelapse/{}.mp4", timestamp_string());
+                                        timelapse = create_video_writer(&timelapse_filename,1.5, fsize);
+
+                                    } else { skip_timlapse = false; }
+                                }
+                            }
+
                             if config.flag_monitor
                             {
-                                rectangle(&mut frame320rc, r, outside_color, 2, LINE_8, 0);
+                                if use_polygon { draw_boundary(&polygon, &mut frame320rc); }
+                                highgui::imshow(window, &mut frame)?;
                             }
                         }
+                        Err(e) => { error!("Error extracting columns from frame: {}", e); }
                     }
                 }
-            }
-
-            // Person recording
-            if person_recording
-            {
-                person_writer.write(&frame)?;
-                let elapsed = SystemTime::now().duration_since(person_last_seen).unwrap().as_millis();
-                if elapsed > 30000   // 30 seconds since last activity
+                if config.flag_monitor
                 {
-                    person_writer.release()?;
-
-                    let flags = Vector::new();
-                    let best_filename = format!("captures/people/photos/{}-best.jpg", person_best_time);
-                    imwrite(&best_filename, &person_best_frame, &flags);
-                    person_best_size = 0;
-
-                    person_recording = false;
-                    info!("Person recording finished.");
-
-                    // Call the notifier
-                    if notify_end_person
-                    {
-                        info!("Calling 'notify_end_person.sh {} {}'", &best_filename, &person_video_file);
-                        let r = Command::new("./notify_end_person.sh")
-                            .arg(best_filename).arg(&person_video_file).spawn();
-                        if let Err(e) = r { error!("Error calling script: {}", e) }
-                    }
-                }
-            }
-            else
-            {
-                // Stash the frame in the buffer
-                if buffer.len() <= buffer_pnt { buffer.push(frame.clone()); }
-                else { buffer[buffer_pnt] = frame.clone(); }
-                buffer_pnt = buffer_pnt + 1;
-                if buffer_pnt == buffer_size { buffer_pnt = 0 };
-            }
-
-            // Time related
-            frames += 1;
-
-            let elapsed = SystemTime::now().duration_since(tick).unwrap().as_millis();
-            if elapsed > 1000
-            {
-                // Update fps
-                fps = (frames as f64) / ((elapsed as f64) / 1000.0);
-                frames = 0;
-                tick = SystemTime::now();
-
-                if config.flag_timelapse
-                {
-                    // Write timelapse frame
-                    timelapse.write(&frame);
-
-                    // Rollover timelapse file
-                    let time = Local::now();
-                    if (time.second() == 0) && (time.minute() == 0) && (!skip_timlapse)
-                    {
-                        skip_timlapse = true;
+                    let key = highgui::wait_key(5)?;
+                    if key > 0 && key != 255 {
                         timelapse.release()?;
-
-                        if notify_timelapse_rollover
-                        {
-                            // Call the notify script
-                            info!("Calling 'notify_timelapse_rollover.sh {}'", &timelapse_filename);
-                            let r = Command::new("./notify_timelapse_rollover.sh")
-                                .arg(&timelapse_filename).spawn();
-                            if let Err(e) = r { error!("Error calling script: {}", e) }
-                        }
-
-                        timelapse_filename = format!("captures/timelapse/{}.mp4", timestamp_string());
-                        timelapse = create_video_writer(&timelapse_filename,1.5, fsize);
-
-                    } else { skip_timlapse = false; }
+                        break;
+                    }
                 }
             }
-
-            if config.flag_monitor
-            {
-                if use_polygon { draw_boundary(&polygon, &mut frame320rc); }
-                highgui::imshow(window, &mut frame)?;
-            }
-        }
-        if config.flag_monitor
-        {
-            let key = highgui::wait_key(5)?;
-            if key > 0 && key != 255 {
-                timelapse.release()?;
-                break;
-            }
+            _ => { error!("Error reading frame from video stream"); }
         }
     }
     Ok(())
@@ -435,7 +445,7 @@ fn timestamp_string() -> String
 
 fn create_video_writer(filename: &str, fps: f64, size: Size) -> VideoWriter
 {
-    let fourcc = VideoWriter::fourcc('m' as i8,'p' as i8,'4' as i8,'v' as i8).expect("Invalid video fourcc");
+    let fourcc = VideoWriter::fourcc('m' as u8,'p' as u8,'4' as u8,'v' as u8).expect("Invalid video fourcc");
     let mut writer = VideoWriter::new(&filename, fourcc, fps, size, true);
     match writer {
         Ok(writer) => {
