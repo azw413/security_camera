@@ -1,5 +1,5 @@
 # Security Camera Monitor
-This is a simple rust project using opencv, Coral EdgeTPU and TensorflowLite to detect people in a video stream. 
+This is a simple rust project using opencv, Coral EdgeTPU (https://coral.ai/products/accelerator) and TensorflowLite to detect people in a video stream. 
 
 Features :-
 * Run with UI monitor window or headless,
@@ -14,6 +14,8 @@ This project uses the ssdlite_mobiledet_coco_qat_postprocess_edgetpu.tflite mode
 It supports all the COCO image labels so if you wanted to detect say dogs or birds instead of people then you could easily change this in the source code. 
 
 You'll need the following dependencies installed :-
+![Coral USB Accelerator](https://lh3.googleusercontent.com/vvBAqSnXyg3h9yS0JLyVehhV-e__3NFbZ6q7Ft-rEZp-9wDTVZ49yjuYJwfa4jQZ-RVnChHMr-DDC0T_fTxVyQg3iBMD-icMQooD6A=w500-rw "Title Text")
+
 * libedgetpu (source: https://github.com/google-coral/libedgetpu)
 * libtensorflowlite-c this is the C api to tensorflowlite. This has to be built from the same revision expected by libedgetpu (see above link). 
 * opencv 
