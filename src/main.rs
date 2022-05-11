@@ -3,6 +3,7 @@ mod config;
 use std::time::SystemTime;
 use std::path::Path;
 use std::process::Command;
+use std::thread;
 use chrono::{DateTime, Local, Timelike};
 use docopt::Docopt;
 use serde::Deserialize;
@@ -167,7 +168,6 @@ fn main() -> Result<()> {
     let mut frame320 = Mat::default();
     let size320= Size::new(RESOLUTION, RESOLUTION);
     let mut fx: i32 = 0;
-    let mut fy: i32 = 0;
     let mut fw = 0;
     let mut d = 0.0;
     let mut fsize = Size::new(0,0);
@@ -181,7 +181,6 @@ fn main() -> Result<()> {
         let dy = (h as f32) / (RESOLUTION as f32);
         if dy < d { d = dy; }
         fx = (w - (((RESOLUTION as f32) * d) as i32)) / 2;
-        fy = (h - (((RESOLUTION as f32) * d) as i32)) / 2;
         fw = fx + (((RESOLUTION as f32) * d) as i32);
         fsize = frame.size()?.clone();
     }
@@ -203,16 +202,16 @@ fn main() -> Result<()> {
     else { info!("Timelapse recording is disabled."); }
 
     // Person recording
-    let mut buffer_size = 150;
+    let buffer_size = 150;
     let mut buffer_pnt = 0;
-    let mut buffer: Vec<Mat> = Vec::with_capacity(buffer_size);
+    let mut buffer: Vec<Mat> = Vec::with_capacity(buffer_size);    /* Cyclic buffer for 10 seconds prior to detection */
+    let mut person_buffer: Vec<Mat> = Vec::new();   /* Buffer for frames in the person recording */
+    let mut person_timestamp= "".to_string();
     let mut person_recording = false;
     let mut person_best_frame = Mat::default();
     let mut person_best_size = 0;
     let mut person_best_time = "".to_string();
     let mut person_last_seen = SystemTime::now();
-    let mut person_video_file = "".to_string();
-    let mut person_writer: VideoWriter = VideoWriter::default()?;
 
     // Main activity loop
     loop {
@@ -220,20 +219,20 @@ fn main() -> Result<()> {
         match rs {
             Ok(true) => {
                 if frame.size()?.width > 0 {
-                    let mut frame320rc = frame.col_bounds(fx, fw);
+                    let frame320rc = frame.col_bounds(fx, fw);
                     match frame320rc {
                         Ok(mut frame320rc) => {
                             resize(&frame320rc, &mut frame320, size320, 0.0, 0.0, INTER_AREA);
 
                             // Create input tensor
                             let mut it = interpreter.inputs();
-                            let mut input_bytes = it[0].bytes_mut();
+                            let input_bytes = it[0].bytes_mut();
 
                             // Copy pixel data swapping from opencv BGR format
                             let mut o = 0;
                             let src = frame320.data_bytes()?;
-                            for y in 1..RESOLUTION {
-                                for x in 1..RESOLUTION {
+                            for _ in 1..RESOLUTION {
+                                for _ in 1..RESOLUTION {
                                     input_bytes[o + 0] = src[o + 2]; // R
                                     input_bytes[o + 1] = src[o + 1]; // G
                                     input_bytes[o + 2] = src[o + 0]; // B
@@ -246,7 +245,7 @@ fn main() -> Result<()> {
 
                             let r = interpreter.invoke();
                             match r {
-                                Err(e) => { println!("Invoke failed"); }
+                                Err(_) => { error!("EdgeTPU invoke failed"); }
                                 _ => {}
                             }
 
@@ -254,7 +253,7 @@ fn main() -> Result<()> {
 
                             for i in 0..50
                             {
-                                if (ot[2].f32s()[i] > THRESHOLD)
+                                if ot[2].f32s()[i] > THRESHOLD
                                 {
                                     let x = (ot[0].f32s()[(i*4) + 1] * (RESOLUTION as f32) * d) as i32;
                                     let y = (ot[0].f32s()[(i*4) + 0] * (RESOLUTION as f32)* d) as i32;
@@ -291,29 +290,12 @@ fn main() -> Result<()> {
                                                 person_best_time = timestamp_string();
                                             }
 
-                                            if (!person_recording)
+                                            if !person_recording
                                             {
                                                 // Start recording
-                                                info!("Person detected - recording started");
+                                                info!("Person detected - recording started to buffer");
                                                 person_recording = true;
-                                                person_video_file = format!("captures/people/video/{}.mp4", timestamp_string());
-                                                person_writer = create_video_writer(&person_video_file, fps, fsize);
-
-                                                // Write the buffer frames
-                                                for i in buffer_pnt..buffer_size
-                                                {
-                                                    let f = buffer.get(i);
-                                                    if let Some(frame) = f { person_writer.write(frame)?; }
-                                                }
-                                                if buffer_pnt > 0 {
-                                                    for i in 0..(buffer_pnt-1)
-                                                    {
-                                                        let f = buffer.get(i);
-                                                        if let Some(frame) = f { person_writer.write(frame)?; }
-                                                    }
-                                                }
-                                                buffer = Vec::with_capacity(buffer_size);
-                                                buffer_pnt = 0;
+                                                person_timestamp = timestamp_string();
 
                                                 // Write first photo and call notifier
                                                 let flags = Vector::new();
@@ -341,28 +323,68 @@ fn main() -> Result<()> {
                             // Person recording
                             if person_recording
                             {
-                                person_writer.write(&frame)?;
+                                person_buffer.push(frame.clone());
+
                                 let elapsed = SystemTime::now().duration_since(person_last_seen).unwrap().as_millis();
                                 if elapsed > 30000   // 30 seconds since last activity
                                 {
-                                    person_writer.release()?;
-
-                                    let flags = Vector::new();
-                                    let best_filename = format!("captures/people/photos/{}-best.jpg", person_best_time);
-                                    imwrite(&best_filename, &person_best_frame, &flags);
-                                    person_best_size = 0;
-
+                                    // Clear buffers for next recording and copy important things for the thread.
+                                    let thread_buffer = person_buffer;
+                                    person_buffer = Vec::new();
+                                    let thread_cyclic = buffer;
+                                    buffer = Vec::with_capacity(buffer_size);
+                                    let thread_pnt = buffer_pnt;
+                                    buffer_pnt = 0;
+                                    let thread_timestamp = person_timestamp.to_string();
                                     person_recording = false;
-                                    info!("Person recording finished.");
+                                    person_best_size = 0;
+                                    let thread_best_frame = person_best_frame.clone();
+                                    let thread_best_time = person_best_time.to_string();
 
-                                    // Call the notifier
-                                    if notify_end_person
-                                    {
-                                        info!("Calling 'notify_end_person.sh {} {}'", &best_filename, &person_video_file);
-                                        let r = Command::new("./notify_end_person.sh")
-                                            .arg(best_filename).arg(&person_video_file).spawn();
-                                        if let Err(e) = r { error!("Error calling script: {}", e) }
-                                    }
+                                    // Write the video and notifications in separate thread so we can start a new recording if necessary
+                                    thread::spawn(move || {
+                                        // Write the file from the buffer to the media
+                                        let person_video_file = format!("captures/people/video/{}.mp4", thread_timestamp);
+                                        let mut person_writer = create_video_writer(&person_video_file, fps, fsize);
+
+                                        // Write the cyclic buffer frames
+                                        for i in thread_pnt..buffer_size
+                                        {
+                                            let f = thread_cyclic.get(i);
+                                            if let Some(frame) = f { person_writer.write(frame).unwrap(); }
+                                        }
+                                        if thread_pnt > 0 {
+                                            for i in 0..(thread_pnt - 1)
+                                            {
+                                                let f = thread_cyclic.get(i);
+                                                if let Some(frame) = f { person_writer.write(frame).unwrap(); }
+                                            }
+                                        }
+
+                                        // Now write the recording buffer
+                                        for frame in &thread_buffer
+                                        {
+                                            person_writer.write(frame).unwrap();
+                                        }
+                                        person_writer.release().unwrap();
+
+
+                                        let flags = Vector::new();
+                                        let best_filename = format!("captures/people/photos/{}-best.jpg", thread_best_time);
+                                        let r = imwrite(&best_filename, &thread_best_frame, &flags);
+                                        if let Err(_) = r { error!("Error saving frame to {}", best_filename); }
+
+                                        info!("Person recording finished.");
+
+                                        // Call the notifier
+                                        if notify_end_person
+                                        {
+                                            info!("Calling 'notify_end_person.sh {} {}'", &best_filename, &person_video_file);
+                                            let r = Command::new("./notify_end_person.sh")
+                                                .arg(best_filename).arg(&person_video_file).spawn();
+                                            if let Err(e) = r { error!("Error calling script: {}", e) }
+                                        }
+                                    });
                                 }
                             }
                             else
@@ -388,7 +410,7 @@ fn main() -> Result<()> {
                                 if config.flag_timelapse
                                 {
                                     // Write timelapse frame
-                                    timelapse.write(&frame);
+                                    timelapse.write(&frame)?;
 
                                     // Rollover timelapse file
                                     let time = Local::now();
@@ -446,7 +468,7 @@ fn timestamp_string() -> String
 fn create_video_writer(filename: &str, fps: f64, size: Size) -> VideoWriter
 {
     let fourcc = VideoWriter::fourcc('m' as u8,'p' as u8,'4' as u8,'v' as u8).expect("Invalid video fourcc");
-    let mut writer = VideoWriter::new(&filename, fourcc, fps, size, true);
+    let writer = VideoWriter::new(&filename, fourcc, fps, size, true);
     match writer {
         Ok(writer) => {
             info!("Creating new video file: {}", filename);
@@ -470,7 +492,8 @@ fn draw_boundary(polygon: &Vec<Point>, frame: &mut Mat)
     {
         if let Some(l) = last
         {
-            line(frame, l, *p, color, LINE_8, 0, 0);
+            let r = line(frame, l, *p, color, LINE_8, 0, 0);
+            if let Err(_) = r { error!("Error drawing polygon line {:?} -> {:?}", l, *p); }
         }
         last = Some(p.clone());
     }
@@ -506,7 +529,7 @@ struct CsvRecord {
 fn read_polygon_file(filename: &str) -> Vec<Point>
 {
     let mut polygon = Vec::new();
-    let mut rdr = csv::Reader::from_path(Path::new(filename));
+    let rdr = csv::Reader::from_path(Path::new(filename));
     match rdr {
         Ok(mut rdr) => {
             for result in rdr.deserialize() {
