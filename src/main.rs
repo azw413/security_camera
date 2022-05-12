@@ -324,8 +324,8 @@ fn main() -> Result<()> {
                                                 let (tx, rx) = mpsc::channel();
 
                                                 let video_filename = format!("captures/people/video/{}.mp4", timestamp_string());
-                                                let image_filename = format!("captures/people/photos/{}-best.jpg", timestamp_string());
-                                                async_writer(rx, video_filename, image_filename, fps, fsize, notify_end_person);
+                                                let image_filename = format!("captures/people/photos/{}-first.jpg", timestamp_string());
+                                                async_writer(rx, video_filename, image_filename.clone(), fps, fsize, notify_end_person);
 
                                                 // Write the cyclic buffer frames
                                                 for _ in buffer_pnt..(buffer.len()-1)
@@ -345,13 +345,12 @@ fn main() -> Result<()> {
 
                                                 // Write first photo and call notifier
                                                 let flags = Vector::new();
-                                                let filename = format!("captures/people/photos/{}-first.jpg", timestamp_string());
-                                                imwrite(&filename, &frame, &flags);
+                                                imwrite(&image_filename, &frame, &flags);
                                                 if notify_start_person
                                                 {
-                                                    info!("Calling 'notify_start_person.sh {}'", &filename);
+                                                    info!("Calling 'notify_start_person.sh {}'", &image_filename);
                                                     let r = Command::new("./notify_start_person.sh")
-                                                        .arg(filename).spawn();
+                                                        .arg(&image_filename).spawn();
                                                     if let Err(e) = r { error!("Error calling script: {}", e) }
                                                 }
                                             }
