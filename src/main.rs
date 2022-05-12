@@ -4,9 +4,13 @@ use std::time::SystemTime;
 use std::path::Path;
 use std::process::Command;
 use std::thread;
+use std::sync::mpsc::{Sender, Receiver, SyncSender};
+use std::sync::{Arc, mpsc, Mutex};
+use std::string::String;
 use chrono::{DateTime, Local, Timelike};
 use docopt::Docopt;
 use serde::Deserialize;
+
 
 use opencv::{
     highgui,
@@ -27,6 +31,17 @@ use crate::config::{Config, USAGE};
 
 const RESOLUTION: i32 = 320;  // input tensor resolution
 const THRESHOLD: f32 = 0.6;
+const MAX_BUFFER_FRAMES: usize = 15 * 120;
+
+#[derive(Clone)]
+enum FrameSend {
+    Frame(Mat),
+    Best(Mat, String),
+    End
+}
+//unsafe impl Send for FrameSend {}
+//unsafe impl Sync for FrameSend {}
+
 
 fn main() -> Result<()> {
     let window = "Security Camera";
@@ -205,13 +220,15 @@ fn main() -> Result<()> {
     let buffer_size = 150;
     let mut buffer_pnt = 0;
     let mut buffer: Vec<Mat> = Vec::with_capacity(buffer_size);    /* Cyclic buffer for 10 seconds prior to detection */
-    let mut person_buffer: Vec<Mat> = Vec::new();   /* Buffer for frames in the person recording */
     let mut person_timestamp= "".to_string();
     let mut person_recording = false;
     let mut person_best_frame = Mat::default();
     let mut person_best_size = 0;
     let mut person_best_time = "".to_string();
     let mut person_last_seen = SystemTime::now();
+
+    // Channel to send frames
+    let mut sync_sender: Option<Sender<FrameSend>> = None;
 
     // Main activity loop
     loop {
@@ -288,6 +305,12 @@ fn main() -> Result<()> {
                                                 person_best_size = area;
                                                 person_best_frame = frame.clone();
                                                 person_best_time = timestamp_string();
+
+                                                match &sync_sender
+                                                {
+                                                    Some(tx) => { tx.send(FrameSend::Best(person_best_frame, person_best_time)); }
+                                                    None => {}
+                                                }
                                             }
 
                                             if !person_recording
@@ -296,6 +319,29 @@ fn main() -> Result<()> {
                                                 info!("Person detected - recording started to buffer");
                                                 person_recording = true;
                                                 person_timestamp = timestamp_string();
+
+                                                // start the async writer
+                                                let (tx, rx) = mpsc::channel();
+
+                                                let video_filename = format!("captures/people/video/{}.mp4", timestamp_string());
+                                                let image_filename = format!("captures/people/photos/{}-best.jpg", timestamp_string());
+                                                async_writer(rx, video_filename, image_filename, fps, fsize, notify_end_person);
+
+                                                // Write the cyclic buffer frames
+                                                for _ in buffer_pnt..(buffer.len()-1)
+                                                {
+                                                    let f = buffer.remove(buffer_pnt);
+                                                    tx.send(FrameSend::Frame(f));
+                                                }
+                                                if buffer_pnt > 0 {
+                                                    for _ in 0..(buffer_pnt - 1)
+                                                    {
+                                                        let f = buffer.remove(0);
+                                                        tx.send(FrameSend::Frame(f));
+                                                    }
+                                                }
+                                                buffer_pnt = 0;
+                                                sync_sender = Some(tx);
 
                                                 // Write first photo and call notifier
                                                 let flags = Vector::new();
@@ -323,68 +369,23 @@ fn main() -> Result<()> {
                             // Person recording
                             if person_recording
                             {
-                                person_buffer.push(frame.clone());
-
                                 let elapsed = SystemTime::now().duration_since(person_last_seen).unwrap().as_millis();
-                                if elapsed > 30000   // 30 seconds since last activity
+
+                                match &sync_sender
                                 {
-                                    // Clear buffers for next recording and copy important things for the thread.
-                                    let thread_buffer = person_buffer;
-                                    person_buffer = Vec::new();
-                                    let thread_cyclic = buffer;
-                                    buffer = Vec::with_capacity(buffer_size);
-                                    let thread_pnt = buffer_pnt;
-                                    buffer_pnt = 0;
-                                    let thread_timestamp = person_timestamp.to_string();
+                                    Some(tx) => {
+                                        if elapsed > 30000 { tx.send(FrameSend::End); }
+                                        else { tx.send(FrameSend::Frame(frame.clone())); }
+                                    }
+                                    None => { error!("sync_sender is none."); }
+                                }
+
+                                if elapsed > 30000  // 30 seconds since last activity
+                                {
+                                    // Finish the async writing
                                     person_recording = false;
                                     person_best_size = 0;
-                                    let thread_best_frame = person_best_frame.clone();
-                                    let thread_best_time = person_best_time.to_string();
-
-                                    // Write the video and notifications in separate thread so we can start a new recording if necessary
-                                    thread::spawn(move || {
-                                        // Write the file from the buffer to the media
-                                        let person_video_file = format!("captures/people/video/{}.mp4", thread_timestamp);
-                                        let mut person_writer = create_video_writer(&person_video_file, fps, fsize);
-
-                                        // Write the cyclic buffer frames
-                                        for i in thread_pnt..buffer_size
-                                        {
-                                            let f = thread_cyclic.get(i);
-                                            if let Some(frame) = f { person_writer.write(frame).unwrap(); }
-                                        }
-                                        if thread_pnt > 0 {
-                                            for i in 0..(thread_pnt - 1)
-                                            {
-                                                let f = thread_cyclic.get(i);
-                                                if let Some(frame) = f { person_writer.write(frame).unwrap(); }
-                                            }
-                                        }
-
-                                        // Now write the recording buffer
-                                        for frame in &thread_buffer
-                                        {
-                                            person_writer.write(frame).unwrap();
-                                        }
-                                        person_writer.release().unwrap();
-
-
-                                        let flags = Vector::new();
-                                        let best_filename = format!("captures/people/photos/{}-best.jpg", thread_best_time);
-                                        let r = imwrite(&best_filename, &thread_best_frame, &flags);
-                                        if let Err(_) = r { error!("Error saving frame to {}", best_filename); }
-
-                                        info!("Person recording finished.");
-
-                                        // Call the notifier
-                                        if notify_end_person
-                                        {
-                                            info!("Calling 'notify_end_person.sh {} {}'", &best_filename, &person_video_file);
-                                            let r = Command::new("./notify_end_person.sh")
-                                                .arg(best_filename).arg(&person_video_file).spawn();
-                                            if let Err(e) = r { error!("Error calling script: {}", e) }
-                                        }
-                                    });
+                                    buffer_pnt = 0;
                                 }
                             }
                             else
@@ -457,6 +458,60 @@ fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+
+// Write the frames in a separate thread
+//    - doing this in the main thread causes stalls on the input stream
+fn async_writer(rx: Receiver<FrameSend>, video_filename: String, image_filename: String, fps: f64, fsize: Size, notify_end_person: bool)
+{
+    let rx = Arc::new(Mutex::new(rx));
+    thread::spawn( move || {
+
+        let rx = rx.lock().unwrap();
+        let mut best_frame = Mat::default();
+        let mut best_time = String::default();
+        let mut have_best = false;
+
+        let mut person_writer = create_video_writer(&video_filename, fps, fsize);
+        loop
+        {
+            let r = rx.recv();
+            if let Ok(r) = r {
+                match r {
+                    FrameSend::Frame(f) => { person_writer.write(&f).unwrap(); }
+                    FrameSend::Best(fm, timestamp) => { best_frame = fm;  best_time = timestamp; have_best = true; }
+                    FrameSend::End => { break; }
+                }
+            }
+        }
+
+        person_writer.release().unwrap();
+
+        // write the best frame
+        let filename = format!("captures/people/photos/{}-best.jpg", best_time);
+        if have_best
+        {
+            let flags = Vector::new();
+            imwrite(&filename, &best_frame, &flags);
+        }
+
+        info!("Person recording finished.");
+
+        // Call the notifier
+        if notify_end_person
+        {
+            let image = match have_best {
+                true => { filename }
+                false => { image_filename }
+            };
+
+            info!("Calling 'notify_end_person.sh {} {}'", &image, &video_filename);
+            let r = Command::new("./notify_end_person.sh")
+                .arg(image).arg(&video_filename).spawn();
+            if let Err(e) = r { error!("Error calling script: {}", e) }
+        }
+    });
 }
 
 fn timestamp_string() -> String
