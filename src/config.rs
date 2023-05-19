@@ -1,4 +1,7 @@
+use std::fs;
+use std::path::Path;
 use serde::Deserialize;
+use crate::camera::Camera;
 
 pub const USAGE: &'static str = "
 security_camera
@@ -14,23 +17,31 @@ Options:
   -m --monitor                      Create monitor window showing real time feed
   -t --timelapse                    Record timelapse files, continuous 1 fps with hourly rollover
   -p --polygon <polygon-file>       Use a boundary polygon, polygon file is csv with one point per line
+  -c --config <config-file>         Use a config file (for multiple camera monitoring)
 ";
 
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Config {
+    pub cameras: Vec<Camera>
+}
+
+impl Config
+{
+    pub fn load(filename: &str) -> Result<Config, Box<dyn std::error::Error>>
+    {
+        let contents = fs::read_to_string(Path::new(filename))?;
+        let config = serde_json::from_str(&contents)?;
+        Ok(config)
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct CliConfig {
     pub arg_video_source: String,
     pub flag_monitor: bool,
     pub flag_timelapse: bool,
     pub flag_polygon: Option<String>,
+    pub flag_config: Option<String>,
 }
 
-pub fn default_config() -> Config
-{
-    Config {
-        arg_video_source: "".to_string(),
-        flag_monitor: false,
-        flag_timelapse: false,
-        flag_polygon: None,
-    }
-}

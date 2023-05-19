@@ -1,0 +1,33 @@
+{
+  "cameras": [
+
+    {
+      "name": "Door",
+      "source": "rtsp://admin:123456@192.168.1.11:8554/profile0?tcp",
+      "monitor": false,
+      "timelapse": false,
+      "trigger_frames": 4,
+      "trigger_distance": 70.0,
+      "boundary": [
+        { "x": 0, "y": 100 },
+        { "x": 160, "y": 160 },
+        { "x": 280, "y": 130 },
+        { "x": 280, "y": 70 },
+        { "x": 380, "y": 50 },
+        { "x": 720, "y": 50 },
+        { "x": 720, "y": 720 },
+        { "x": 0, "y": 720 },
+        { "x": 0, "y": 100 }
+       ]
+    },
+
+    {
+      "name": "Garden",
+      "source": "rtsp://admin:_garden_@192.168.1.35:554/H264/ch1/main/av_stream?tcp",
+      "monitor": false,
+      "timelapse": false,
+      "trigger_frames": 4,
+      "trigger_distance": 10.0
+    }
+  ]
+}
