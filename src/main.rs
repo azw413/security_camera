@@ -6,8 +6,10 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::thread::sleep;
 use std::time::Duration;
+
 use docopt::Docopt;
 use serde::Deserialize;
+
 
 use opencv::{
     Result
@@ -18,6 +20,8 @@ use crate::camera::{Camera, Point};
 use crate::config::{CliConfig, Config, USAGE};
 
 #[macro_use] extern crate log;
+
+
 
 
 fn main() -> Result<()>
@@ -80,13 +84,6 @@ fn main() -> Result<()>
         notify_timelapse_rollover = true;
     }
 
-    // Boundary polygon
-    let mut polygon: Vec<Point> = Vec::default();
-    if config.flag_polygon.is_some()
-    {
-        polygon = read_polygon_file(&config.flag_polygon.unwrap());
-    }
-
 
     // Moonfire-tflite
     static EDGETPU_MODEL: &'static [u8] = include_bytes!("../ssdlite_mobiledet_coco_qat_postprocess_edgetpu.tflite");
@@ -146,23 +143,19 @@ fn main() -> Result<()>
                     .join()
                     .expect("The thread creating or execution failed !")
             });
-
         }
         None => {
             // Create Single Camera instance when no config file
             let mut camera = Camera::new(&config.arg_video_source);
             if config.flag_monitor { camera.monitor = true; }
-            if config.flag_polygon.is_some()
+            if let Some(polygon_file) = &config.flag_polygon
             {
-                camera.boundary = Some(read_polygon_file(&config.flag_polygon.unwrap()));
+                camera.boundary = Some(read_polygon_file(polygon_file));
             }
 
             camera.run(interpreter, notify_start_person, notify_end_person, notify_timelapse_rollover)?;
-
         }
     }
-
-
 
     Ok(())
 }

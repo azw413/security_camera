@@ -86,7 +86,6 @@ A larger property might have multiple cameras covering different entrances so th
 ```
 {
   "cameras": [
-
     {
       "name": "Door",
       "source": "rtsp://admin:123456@192.168.1.11:8554/profile0?tcp",
