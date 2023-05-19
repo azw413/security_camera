@@ -70,41 +70,16 @@ impl Camera
 
     pub fn run(&self, interpreter: Arc<Mutex<Interpreter>>, notify_start_person: bool, notify_end_person: bool, notify_timelapse_rollover: bool) -> Result<()>
     {
-        let mut shutdown = false;
         if self.monitor
         {
             highgui::named_window(&self.name, highgui::WINDOW_AUTOSIZE)?;
             info!("Opened monitor window for {}", &self.name);
         }
 
-
-        let mut cam: VideoCapture;
-
-        /* Redundant
-        #[cfg(ocvrs_opencv_branch_32)]
-        if self.source.len() == 0
-        {
-            cam = videoio::VideoCapture::new_default(0)?;
-            info!("{}: Opening default video stream.", &self.name);
-        } else {
-            cam = videoio::VideoCapture::open(&self.source);
-            info!("{}: Opening video stream at {}", &self.name, &self.source);
-        }
-
-        #[cfg(not(ocvrs_opencv_branch_32))]
-
-        if self.source.len() == 0
-        {
-            cam = videoio::VideoCapture::new(0, videoio::CAP_ANY)?;
-            // 0 is the default camera
-            info!("{}: Opening default video stream.", &self.name);
-        } else { */
-
-        cam = videoio::VideoCapture::from_file(&self.source, 0)?;
+        let mut cam: VideoCapture = videoio::VideoCapture::from_file(&self.source, 0)?;
 
         // stream
         info!("{}: Opening video stream at {}", &self.name, &self.source);
-        //}
 
         let opened = videoio::VideoCapture::is_opened(&cam)?;
 
@@ -140,7 +115,7 @@ impl Camera
         let mut fps = 0.0;
         let mut frames_minute = 0;
         let mut elapsed_seconds = 0;
-        let mut last_minute_fps = 0;
+        let mut frame_monitoring_interval = 300;
 
 
         // Timelapse recording
@@ -309,16 +284,13 @@ impl Camera
                                     fps = (frames as f64) / ((elapsed as f64) / 1000.0);
                                     frames = 0;
                                     elapsed_seconds += 1;
-                                    if elapsed_seconds >= 300 // 5 minutes
+                                    if elapsed_seconds >= frame_monitoring_interval // 5 minutes
                                     {
-                                        let fps = frames_minute / elapsed_seconds;
-                                        if fps != last_minute_fps
-                                        {
-                                            info!("{}: Average fps = {:.1}", &self.name, frames_minute as f32 / elapsed_seconds as f32);
-                                            last_minute_fps = fps;
-                                        }
+                                        let fps = frames_minute as f32 / elapsed_seconds as f32;
+                                        info!("{}: Average fps = {:.1}", &self.name, fps);
                                         elapsed_seconds = 0;
                                         frames_minute = 0;
+                                        frame_monitoring_interval = 3600; // Increase to hourly after first 5 minutes
                                     }
 
 
